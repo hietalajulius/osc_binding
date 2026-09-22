@@ -8,8 +8,6 @@
 #define STRINGIFY(x) #x
 #define MACRO_STRINGIFY(x) STRINGIFY(x)
 
-//step_controller(np.zeros(16), np.zeros(16), np.zeros(7), np.zeros(7), np.zeros(7) np.zeros(49), np.zeros(42), np.zeros(7), np.zeros(7), np.zeros(3), np.zeros(3), 10.0, 10.0, 10.0, 10.0, 10.0, 1)
-
 Eigen::MatrixXd step_controller(std::array<double, 16> initial_O_T_EE_array,
                                 std::array<double, 16> O_T_EE_array,
                                 std::array<double, 7> initial_q_array,
@@ -61,28 +59,44 @@ namespace py = pybind11;
 
 PYBIND11_MODULE(osc_binding, m) {
     m.doc() = R"pbdoc(
-        Pybind11 example plugin
-        -----------------------
+        Python bindings for a C++ operational-space controller.
+        --------------------------------------------------------
 
         .. currentmodule:: osc_binding
 
         .. autosummary::
            :toctree: _generate
 
-           add
-           subtract
+           step_controller
     )pbdoc";
 
     m.def("step_controller", &step_controller, R"pbdoc(
-        Add two numbers
+        Compute a joint torque command with the external OSC implementation.
 
-        Some other explanation about the add function.
+        Positional arguments, in order:
+            initial_O_T_EE_array, O_T_EE_array: initial and current 4x4
+                end-effector transforms, each flattened to 16 values.
+            initial_q_array, q_array, dq_array: initial joint positions,
+                current joint positions, and joint velocities (7 values each).
+            mass_array: 7x7 joint-space mass matrix (49 values).
+            jacobian_array: 6x7 end-effector Jacobian (42 values).
+            coriolis_array: Coriolis torque vector (7 values).
+            tau_J_d_array: previous desired joint torques (7 values).
+            position_d_array, velocity_d_array: Cartesian position and
+                velocity targets (3 values each).
+            delta_tau_max_: maximum torque change passed to the controller.
+            kp_pos, kp_rot: scalar position and rotation gains.
+            damping_ratio: damping ratio used to derive velocity gains.
+
+        Flatten matrices in column-major order. The orientation target comes
+        from initial_O_T_EE_array. Coordinate frames and units must match the
+        external controller's conventions.
+
+        Returns the controller's joint torque matrix as a NumPy array.
     )pbdoc");
 
     m.def("subtract", [](int i, int j) { return i - j; }, R"pbdoc(
-        Subtract two numbers
-
-        Some other explanation about the subtract function.
+        Subtract two integers (legacy template helper).
     )pbdoc");
 
     class MyClass {
