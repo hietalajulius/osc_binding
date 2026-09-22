@@ -1,107 +1,80 @@
-# osc_binding for pybind11
+# osc_binding
 
-[![Gitter][gitter-badge]][gitter-link]
+Python bindings for a C++ operational-space controller for robotic manipulation,
+built with [pybind11](https://github.com/pybind/pybind11) and Eigen. The binding
+passes robot state, dynamics, and Cartesian targets from Python to the controller
+and returns joint torques for a seven-joint arm.
 
-|      CI              | status |
-|----------------------|--------|
-| MSVC 2015            | [![AppVeyor][appveyor-badge]][appveyor-link] |
-| conda.recipe         | [![Conda Actions Status][actions-conda-badge]][actions-conda-link] |
-| pip builds           | [![Pip Actions Status][actions-pip-badge]][actions-pip-link] |
-| [`cibuildwheel`][]   | [![Wheels Actions Status][actions-wheels-badge]][actions-wheels-link] |
+The main entry point, `step_controller`, supports position and velocity targets,
+uses the initial end-effector orientation as its orientation target, and takes
+position/rotation gains, a damping ratio, and a torque-change limit.
 
-[gitter-badge]:            https://badges.gitter.im/pybind/Lobby.svg
-[gitter-link]:             https://gitter.im/pybind/Lobby
-[actions-badge]:           https://github.com/pybind/osc_binding/workflows/Tests/badge.svg
-[actions-conda-link]:      https://github.com/pybind/osc_binding/actions?query=workflow%3A%22Conda
-[actions-conda-badge]:     https://github.com/pybind/osc_binding/workflows/Conda/badge.svg
-[actions-pip-link]:        https://github.com/pybind/osc_binding/actions?query=workflow%3A%22Pip
-[actions-pip-badge]:       https://github.com/pybind/osc_binding/workflows/Pip/badge.svg
-[actions-wheels-link]:     https://github.com/pybind/osc_binding/actions?query=workflow%3AWheels
-[actions-wheels-badge]:    https://github.com/pybind/osc_binding/workflows/Wheels/badge.svg
-[appveyor-link]:           https://ci.appveyor.com/project/dean0x7d/cmake-example/branch/master
-[appveyor-badge]:          https://ci.appveyor.com/api/projects/status/57nnxfm4subeug43/branch/master?svg=true
+## Build requirements
 
-An example [pybind11](https://github.com/pybind/pybind11) module built with a
-CMake-based build system. This is useful for C++ codebases that have an
-existing CMake project structure. This is in many cases superseded by
-[`scikit_build_example`](https://github.com/pybind/scikit_build_example), which uses
-[scikit-build][], a tool from the makers of CMake designed to allow Python
-packages to be driven from CMake. However, there are still cases where you
-might want full control over the CMake run; and both of these approaches have
-some trade-offs not present in a pure setuptools build (see
-[`python_example`](https://github.com/pybind/python_example))
+- Python with development headers, a C++11 compiler, and Eigen headers available
+  to the compiler.
+- CMake and a build tool. The Python build configuration requests CMake >= 3.12
+  and Ninja on non-Windows platforms.
+- The `pybind11` Git submodule.
+- The separate OSC controller source tree, including `osc/osc_step.h` and its
+  dependencies. It is **not included in this repository**. The current build
+  expects its include directory at
+  `${ROBOTICS_PATH}/osc_ws/src/osc/include`.
 
-## Prerequisites
-
-**On Unix (Linux, OS X)**
-
-* A compiler with C++11 support
-* CMake >= 3.4 or Pip 10+
-* Ninja or Pip 10+
-
-**On Windows**
-
-* Visual Studio 2015 or newer (required for all Python versions, see notes below)
-* CMake >= 3.8 (3.8 was the first version to support VS 2015) or Pip 10+
-
-
-## Installation
-
-Just clone this repository and pip install. Note the `--recursive` option which is
-needed for the pybind11 submodule:
+Once that controller workspace and its dependencies are available:
 
 ```bash
-git clone --recursive https://github.com/pybind/osc_binding.git
-pip install ./osc_binding
+git clone --recursive https://github.com/hietalajulius/osc_binding.git
+cd osc_binding
+export ROBOTICS_PATH=/absolute/path/to/your/robotics/workspace
+python -m pip install .
 ```
 
-With the `setup.py` file included in this example, the `pip install` command will
-invoke CMake and build the pybind11 module as specified in `CMakeLists.txt`.
+`ROBOTICS_PATH` is read by `setup.py` and passed to CMake. Installing this
+repository alone does not install the external controller or a robot model.
 
+## Calling the controller
 
-## Special notes for Windows
+The binding accepts positional arguments. Matrices must be flattened in
+**column-major order** because the C++ code maps them into Eigen's default
+storage layout.
 
-**Compiler requirements**
-
-Pybind11 requires a C++11 compliant compiler, i.e Visual Studio 2015 on Windows.
-This applies to all Python versions, including 2.7. Unlike regular C extension
-modules, it's perfectly fine to compile a pybind11 module with a VS version newer
-than the target Python's VS version. See the [FAQ] for more details.
-
-**Runtime requirements**
-
-The Visual C++ 2015 redistributable packages are a runtime requirement for this
-project. It can be found [here][vs2015_runtime]. If you use the Anaconda Python
-distribution, you can add `vs2015_runtime` as a platform-dependent runtime
-requirement for you package: see the `conda.recipe/meta.yaml` file in this example.
-
-
-## Building the documentation
-
-Documentation for the example project is generated using Sphinx. Sphinx has the
-ability to automatically inspect the signatures and documentation strings in
-the extension module to generate beautiful documentation in a variety formats.
-The following command generates HTML-based reference documentation; for other
-formats please refer to the Sphinx manual:
-
- - `cd osc_binding/docs`
- - `make html`
-
-
-## License
-
-Pybind11 is provided under a BSD-style license that can be found in the LICENSE
-file. By using, distributing, or contributing to this project, you agree to the
-terms and conditions of this license.
-
-
-## Test call
+The following adapter shows the call using state and dynamics supplied by your
+robot or simulator. It does not acquire state or send commands to hardware.
 
 ```python
+import numpy as np
 import osc_binding
-osc_binding.add(1, 2)
+
+
+def compute_torques(
+    initial_transform, transform,       # 4 x 4 end-effector transforms
+    initial_q, q, dq,                    # 7 joint positions/velocities each
+    mass, jacobian,                      # 7 x 7 and 6 x 7
+    coriolis, previous_desired_torques,  # 7 values each
+    position_target, velocity_target,   # 3 Cartesian values each
+    max_torque_change, kp_pos, kp_rot, damping_ratio,
+):
+    def flat(values):
+        return np.asarray(values, dtype=np.float64).ravel(order="F").tolist()
+
+    return osc_binding.step_controller(
+        flat(initial_transform), flat(transform),
+        flat(initial_q), flat(q), flat(dq),
+        flat(mass), flat(jacobian),
+        flat(coriolis), flat(previous_desired_torques),
+        flat(position_target), flat(velocity_target),
+        max_torque_change, kp_pos, kp_rot, damping_ratio,
+    )
 ```
 
-[`cibuildwheel`]:          https://cibuildwheel.readthedocs.io
-[FAQ]: http://pybind11.rtfd.io/en/latest/faq.html#working-with-ancient-visual-studio-2009-builds-on-windows
-[vs2015_runtime]: https://www.microsoft.com/en-us/download/details.aspx?id=48145
+Use consistent coordinate frames and the conventions expected by the external
+OSC implementation. The return value is the controller's joint torque matrix,
+exposed as a NumPy array.
+
+## Provenance and license
+
+This repository was forked from
+[pybind/cuda_example](https://github.com/pybind/cuda_example). The original
+copyright notice and license are preserved in [LICENSE](LICENSE). Some legacy
+template helpers and tests remain; the controller API is `step_controller`.
